@@ -19,7 +19,8 @@ async function run() {
     // All Collection //
     const categoryCollection = client.db('resaleProducts').collection('categories');
     const productCollection = client.db('resaleProducts').collection('products');
-    const bookingCollection = client.db('resaleProducts').collection('bookings');
+    const orderCollection = client.db('resaleProducts').collection('orders');
+    const userCollection = client.db('resaleProducts').collection('users');
 
     app.get('/categories', async (req, res) => {
         const query = {};
@@ -32,15 +33,22 @@ async function run() {
         const result = await productCollection.find(query).toArray();
         res.send(result);
     })
-    app.post('/bookings', async (req, res) => {
-        const booking = req.body;
-        const result = await bookingCollection.insertOne(booking);
+    app.post('/orders', async (req, res) => {
+        const order = req.body;
+        const result = await orderCollection.insertOne(order);
         res.send(result);
     })
-    app.get('/bookings', async (req, res) => {
-        const query = {};
-        const bookings = await bookingCollection.find(query).toArray();
-        res.send(bookings);
+    app.get('/orders', async (req, res) => {
+        const email = req.query.email;
+        console.log(email);
+        const query = { email: email }
+        const orders = await orderCollection.find(query).toArray();
+        res.send(orders);
+    })
+    app.post('/users', async (req, res) => {
+        const user = req.body;
+        const result = await userCollection.insertOne(user);
+        res.send(result);
     })
 
 }
