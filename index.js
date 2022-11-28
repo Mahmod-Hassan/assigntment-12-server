@@ -37,6 +37,7 @@ async function run() {
     const productCollection = client.db('resaleProducts').collection('products');
     const orderCollection = client.db('resaleProducts').collection('orders');
     const userCollection = client.db('resaleProducts').collection('users');
+    const reviewCollection = client.db('resaleProducts').collection('reviews');
 
     // get all category name like- iphone, readmi, samsung
     app.get('/category', async (req, res) => {
@@ -81,9 +82,18 @@ async function run() {
     })
 
     // when user register he/she will be stored in userCollection
-    app.post('/users', async (req, res) => {
+    app.put('/users', async (req, res) => {
         const user = req.body;
-        const result = await userCollection.insertOne(user);
+        const email = req.query.email;
+        const options = { upsert: true };
+        const filter = { email: email };
+        const updateDoc = {
+            $set: {
+                user
+            }
+        }
+        const result = await userCollection.updateOne(filter, updateDoc, options);
+        console.log(result);
         res.send(result);
     })
 
@@ -170,6 +180,17 @@ async function run() {
         const query = { _id: ObjectId(id) };
         const result = await userCollection.deleteOne(query);
         res.send(result);
+    })
+
+    app.post('/reviews', async (req, res) => {
+        const review = req.body;
+        const result = await reviewCollection.insertOne(review);
+        res.send(result);
+    })
+    app.get('/reviews', async (req, res) => {
+        const query = {};
+        const reviews = await reviewCollection.find(query).toArray();
+        res.send(reviews);
     })
     // If a user register / googleSignIn/ Login then he will be given a token
     app.get('/jwt', async (req, res) => {
