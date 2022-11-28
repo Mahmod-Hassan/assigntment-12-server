@@ -86,8 +86,10 @@ async function run() {
         const result = await userCollection.insertOne(user);
         res.send(result);
     })
-    app.get('/users', async (req, res) => {
-        const email = req.query.email;
+
+    // get user by email address
+    app.get('/users/:email', async (req, res) => {
+        const email = req.params.email;
         const query = { email: email };
         const user = await userCollection.findOne(query);
         res.send(user);
@@ -110,6 +112,25 @@ async function run() {
         }
         return res.status(403).send({ message: 'forbidden access' })
     })
+    app.put('/users/seller/:id', verifyJWT, async (req, res) => {
+        const decodedEmail = req.decoded.email;
+        const query = { email: decodedEmail };
+        const user = await userCollection.findOne(query);
+        if (user?.verified === true) {
+            res.send(user)
+
+        }
+        const id = req.params.id;
+        const filter = { _id: ObjectId(id) };
+        const options = { upsert: true };
+        const updateDoc = {
+            $set: {
+                verified: true
+            }
+        }
+        const result = await userCollection.updateOne(filter, updateDoc, options);
+        res.send(result);
+    })
 
     // checking current user admin or not
     app.get('/users/admin/:email', async (req, res) => {
@@ -120,11 +141,11 @@ async function run() {
     })
 
     // checking current user seller or not
-    app.get('/users/admin/:email', async (req, res) => {
+    app.get('/users/seller/:email', async (req, res) => {
         const email = req.params.email;
         const query = { email: email };
         const user = await userCollection.findOne(query);
-        res.send({ isAdmin: user?.role === 'admin' })
+        res.send({ isSeller: user?.user_type === 'seller' })
     })
 
     // get all buyers by checking user_type === 'buyer'
@@ -135,7 +156,7 @@ async function run() {
         res.send(allBuyers);
     })
 
-    // get all sellers by checking user_type === 'Sellers'
+    // get all sellers by checking user_type === 'sellers' or not
     app.get('/all-sellers', async (req, res) => {
         const userType = req.query.type;
         const query = { user_type: userType };
@@ -143,6 +164,13 @@ async function run() {
         res.send(allSellers);
     })
 
+    // we will delete buyer and seller by this route
+    app.delete('/delete-user/:id', async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: ObjectId(id) };
+        const result = await userCollection.deleteOne(query);
+        res.send(result);
+    })
     // If a user register / googleSignIn/ Login then he will be given a token
     app.get('/jwt', async (req, res) => {
         const email = req.query.email;
