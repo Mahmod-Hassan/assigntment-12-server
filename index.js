@@ -1,8 +1,9 @@
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const express = require('express');
+require('dotenv').config();
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
-require('dotenv').config();
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 const app = express();
 const port = process.env.PORT || 5000;
 
@@ -17,11 +18,11 @@ const client = new MongoClient(uri, { useNewUrlParser: true, useUnifiedTopology:
 
 // verify the token whether it is valid or not
 function verifyJWT(req, res, next) {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
+    const validUser = req.headers.authorization;
+    if (!validUser) {
         return res.status(401).send('unauthorized access');
     }
-    const token = authHeader.split(' ')[1];
+    const token = validUser.split(' ')[1];
     jwt.verify(token, process.env.ACCESS_TOKEN, function (err, decoded) {
         if (err) {
             return res.status(403).send('forbidden');
@@ -37,8 +38,27 @@ async function run() {
     const productCollection = client.db('resaleProducts').collection('products');
     const orderCollection = client.db('resaleProducts').collection('orders');
     const userCollection = client.db('resaleProducts').collection('users');
-    const reviewCollection = client.db('resaleProducts').collection('reviews');
+    const paymentCollection = client.db('resaleProducts').collection('payments');
 
+    const verifyAdmin = async (req, res, next) => {
+        const decodedEmail = req.decoded.email;
+        const query = { email: decodedEmail };
+        const user = await userCollection.findOne(query);
+        if (user?.role !== 'admin') {
+            return res.status(403).send({ message: 'forbidden access' })
+        }
+        next()
+    }
+
+    const verifySeller = async (req, res, next) => {
+        const decodedEmail = req.decoded.email;
+        const query = { email: decodedEmail };
+        const user = await userCollection.findOne(query);
+        if (!user?.verified) {
+            return res.status(403).send({ message: 'forbidden access' })
+        }
+        next();
+    }
     // get all category name like- iphone, readmi, samsung
     app.get('/category', async (req, res) => {
         const query = {};
@@ -56,9 +76,27 @@ async function run() {
     })
 
     // seller can add product
-    app.post('/add-product', async (req, res) => {
+    app.post('/add-product', verifyJWT, async (req, res) => {
         const product = req.body;
         const result = await productCollection.insertOne(product);
+        res.send(result);
+    })
+    app.get('/my-products', async (req, res) => {
+        const email = req.query.email;
+        const query = { email: email };
+        const result = await productCollection.find(query).toArray();
+        res.send(result);
+    })
+    app.put('/product/:id', verifyJWT, verifySeller, async (req, res) => {
+        const id = req.params.id;
+        const filter = { _id: ObjectId(id) };
+        const options = { upsert: true };
+        const updateDoc = {
+            $set: {
+                booked: 'booked'
+            }
+        }
+        const result = await productCollection.updateOne(filter, updateDoc, options);
         res.send(result);
     })
 
@@ -69,67 +107,62 @@ async function run() {
         res.send(result);
     })
 
-    // in this route buyer can see his/her orders
     app.get('/my-orders', verifyJWT, async (req, res) => {
-        const email = req.query.email;
         const decodedEmail = req.decoded.email;
+        const email = req.query.email;
         if (email !== decodedEmail) {
-            return res.status(403).send({ message: 'forbidden access' })
+            return res.status(402).send({ message: 'forbidden' });
         }
         const query = { email: email }
         const orders = await orderCollection.find(query).toArray();
         res.send(orders);
     })
 
-    // when user register he/she will be stored in userCollection
+    app.delete('/delete-order/:id', async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: ObjectId(id) };
+        const result = await orderCollection.deleteOne(query);
+        res.send(result);
+    })
+    // when user register he/she will be inserted in userCollection
+    // if user already exist nothing changes  happened
     app.put('/users', async (req, res) => {
         const user = req.body;
         const email = req.query.email;
         const options = { upsert: true };
         const filter = { email: email };
         const updateDoc = {
-            $set: {
-                user
-            }
+            $set: user
         }
         const result = await userCollection.updateOne(filter, updateDoc, options);
-        console.log(result);
         res.send(result);
     })
 
     // get user by email address
-    app.get('/users/:email', async (req, res) => {
+    app.get('/users/:email', verifyJWT, async (req, res) => {
+        const decodedEmail = req.decoded.email;
         const email = req.params.email;
+        if (email !== decodedEmail) {
+            return res.status(402).send({ message: 'forbidden' });
+        }
         const query = { email: email };
         const user = await userCollection.findOne(query);
         res.send(user);
     })
-    app.put('/users/admin/:id', verifyJWT, async (req, res) => {
-        const decodedEmail = req.decoded.email;
-        const query = { email: decodedEmail };
-        const user = await userCollection.findOne(query);
-        if (user?.role === 'admin') {
-            const id = req.params.id;
-            const filter = { _id: ObjectId(id) };
-            const options = { upsert: true };
-            const updateDoc = {
-                $set: {
-                    role: 'admin'
-                }
-            }
-            const result = await userCollection.updateOne(filter, updateDoc, options);
-            res.send(result);
-        }
-        return res.status(403).send({ message: 'forbidden access' })
-    })
-    app.put('/users/seller/:id', verifyJWT, async (req, res) => {
-        const decodedEmail = req.decoded.email;
-        const query = { email: decodedEmail };
-        const user = await userCollection.findOne(query);
-        if (user?.verified === true) {
-            res.send(user)
 
-        }
+    app.put('/users/admin/:id', verifyJWT, verifyAdmin, async (req, res) => {
+        const id = req.params.id;
+        const filter = { _id: ObjectId(id) };
+        const options = { upsert: true };
+        const updateDoc = {
+            $set: {
+                role: 'admin'
+            }
+        };
+        const results = await userCollection.updateOne(filter, updateDoc, options);
+        res.send(results);
+    })
+    app.put('/users/seller/:id', verifyJWT, verifySeller, async (req, res) => {
         const id = req.params.id;
         const filter = { _id: ObjectId(id) };
         const options = { upsert: true };
@@ -182,15 +215,45 @@ async function run() {
         res.send(result);
     })
 
-    app.post('/reviews', async (req, res) => {
-        const review = req.body;
-        const result = await reviewCollection.insertOne(review);
+    app.delete('/delete-product/:id', async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: ObjectId(id) };
+        const result = await productCollection.deleteOne(query);
         res.send(result);
     })
-    app.get('/reviews', async (req, res) => {
-        const query = {};
-        const reviews = await reviewCollection.find(query).toArray();
-        res.send(reviews);
+    app.get('/payment-order/:id', async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: ObjectId(id) };
+        const order = await orderCollection.findOne(query);
+        res.send(order);
+    })
+    app.post('/payments', async (req, res) => {
+        const payment = req.body;
+        const result = await paymentCollection.insertOne(payment);
+        const id = payment.orderId;
+        const filter = { _id: ObjectId(id) };
+        const updatedDoc = {
+            $set: {
+                paid: true
+            }
+        }
+        const updatedResult = await orderCollection.updateOne(filter, updatedDoc);
+        res.send(result);
+    })
+    app.post('/create-payment-intent', verifyJWT, async (req, res) => {
+        const order = req.body;
+        const price = order.price;
+        const amount = price * 100;
+        const paymentIntent = await stripe.paymentIntents.create({
+            currency: 'usd',
+            amount: amount,
+            'payment_method_types': [
+                'card'
+            ]
+        })
+        res.send({
+            clientSecret: paymentIntent.client_secret,
+        });
     })
     // If a user register / googleSignIn/ Login then he will be given a token
     app.get('/jwt', async (req, res) => {
